@@ -345,7 +345,7 @@ void getLocalMax(double *d_A, double *d_pivot, int *d_pivot_line, int size, size
 		local_pivot[tid] = 0;
 	}
 	__syncthreads();
-
+/*
 	if (THREADCOUNT >= 512)
 	{
 		if (tid < 256) { getMax(local_pivot, local_pivot_line, tid, 256); } __syncthreads();
@@ -369,6 +369,15 @@ void getLocalMax(double *d_A, double *d_pivot, int *d_pivot_line, int size, size
 		getMax(local_pivot, local_pivot_line, tid, 4);
 		getMax(local_pivot, local_pivot_line, tid, 2);
 		getMax(local_pivot, local_pivot_line, tid, 1);
+	}
+*/
+
+	for (int i = THREADCOUNT / 2; i > 0; i /= 2)
+	{
+		if (tid < i)
+		{
+			getMax(local_pivot, local_pivot_line, tid, i);
+		} __syncthreads();
 	}
 
 	if (tid == 0)
@@ -398,7 +407,7 @@ void getRealMax(double *d_pivot, int *d_pivot_line, int size, int thread_count)
 		local_pivot[tid] = 0;
 	}
 	__syncthreads();
-
+/*
 	if (thread_count >= 512)
 	{
 		if (tid < 256) { getMax(local_pivot, local_pivot_line, tid, 256); }
@@ -426,6 +435,14 @@ void getRealMax(double *d_pivot, int *d_pivot_line, int size, int thread_count)
 		getMax(local_pivot, local_pivot_line, tid, 2);
 		getMax(local_pivot, local_pivot_line, tid, 1);
 	}
+*/
+	for (int i = thread_count / 2; i > 0; i /= 2)
+	{
+		if (tid < i)
+		{
+			getMax(local_pivot, local_pivot_line, tid, i);
+		} __syncthreads();
+	}
 
 	if (tid == 0)
 	{
@@ -441,7 +458,7 @@ void switchPivot(double *d_A, double *d_current, size_t d_pitch, int size, int p
 
 	if (i < size)
 	{
-		i += current;
+		i += current;// printf("switch %dth value\n", i);
 		d_Array(d_A, current, i) = d_Array(d_A, pivot_line, i);
 		d_Array(d_A, pivot_line, i) = d_Array(d_current, 0, i);
 	}
@@ -454,11 +471,12 @@ void dividePivot(double *d_A, size_t d_pitch, double pivot, int size, int curren
 
 	if (i < size)
 	{
-		i += current;
+		i += current;// printf("switch %dth value\n", i);
 		d_Array(d_A, current, i) /= pivot;
 	}
 }
 
+/*
 __global__
 void subtractPivot(double *d_A, size_t d_pitch, int size, int current)
 {
@@ -468,10 +486,34 @@ void subtractPivot(double *d_A, size_t d_pitch, int size, int current)
 	unsigned int grp = blockDim.y;
 
 	for (; j < size && i < size - 1; j += grp)
-	{
+	{//printf("[%d, %d] -= [%d, %d] * [%d, %d]\n", i+current+1, j+current,  i+current+1,current, current, j+current);
 		d_Array(d_A, i + current + 1, j + current) -=
 				d_Array(d_A, i + current + 1, current) *
 				d_Array(d_A, current, j + current);
+	}
+}
+*/
+__global__
+void subtractPivot(double *d_A, size_t d_pitch, int size, int current)
+{
+	unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+	unsigned int grp = blockDim.x;
+	unsigned int boundary = (blockIdx.x + 1) * blockDim.x;
+	if (boundary > size - 1) boundary = size - 1;
+
+	__shared__ double target[THREADCOUNT];
+	if (tid < size - 1)
+	{
+		target[threadIdx.x] = -d_Array(d_A, tid + current + 1, current);
+	}
+	__syncthreads();
+
+	for (int i = blockIdx.x * blockDim.x; i < boundary; i++)
+	{
+		for (int j = tid; j < size; j += grp)
+		{
+			d_Array(d_A, i + current + 1, j + current) += target[i] * d_Array(d_A, current, j + current);
+		}
 	}
 }
 
@@ -535,11 +577,7 @@ void do_solve()
 	cudaStream_t pivot_stream, b_stream;
 	cudaStreamCreate(&pivot_stream);
 	cudaStreamCreate(&b_stream);
-/*
-	cudaStream_t lpivot_stream, lpivot_line_stream;
-	cudaStreamCreate(&lpivot_stream);
-	cudaStreamCreate(&lpivot_line_stream);
-*/
+
 	#ifdef EBM
 	//TODO: compare time w/o following code:
 //		cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte);
@@ -577,7 +615,6 @@ void do_solve()
 
 		// -- find pivot --
 		getLocalMax<<<block_count, THREADCOUNT>>>(d_A, d_pivot, d_pivot_line, n - current, d_pitch, current);
-		cudaDeviceSynchronize();
 		if (block_count > PIVOTLBOUND)
 		{
 			int thread_count = THREADCOUNT;
@@ -585,6 +622,7 @@ void do_solve()
 
 			int shared_size = (sizeof(double) + sizeof(int)) * thread_count;
 
+			cudaDeviceSynchronize();
 			getRealMax<<<1, thread_count, shared_size>>>(d_pivot, d_pivot_line, block_count, thread_count);
 			cudaDeviceSynchronize();
 			cudaMemcpy(&pivot_line, d_pivot_line, sizeof(int), cudaMemcpyDeviceToHost);
@@ -594,14 +632,9 @@ void do_solve()
 			double local_pivot[PIVOTLBOUND];
 			int local_pivot_line[PIVOTLBOUND];
 
-//			cudaStreamSynchronize(lpivot_stream);
-//			cudaStreamSynchronize(lpivot_line_stream);
-
+			cudaDeviceSynchronize();
 			cudaMemcpy(local_pivot, d_pivot, block_count * sizeof(double), cudaMemcpyDeviceToHost);
 			cudaMemcpy(local_pivot_line, d_pivot_line, block_count * sizeof(int), cudaMemcpyDeviceToHost);
-
-//			cudaMemsetAsync(d_pivot, 0x0, block_count * sizeof(double), lpivot_stream);
-//			cudaMemsetAsync(d_pivot_line, 0x0, block_count * sizeof(int), lpivot_line_stream);
 
 			pivot = local_pivot[0]; pivot_line = local_pivot_line[0];
 
@@ -647,9 +680,9 @@ void do_solve()
 			pivot_candidate[current] = temp;
 
 			#ifdef DEBUG_ENABLED
-				printf("switched\n");
-				cudaMemcpy2D(_A, sizeof(double) * n, d_A, d_pitch, sizeof(double) * n, n, cudaMemcpyDeviceToHost);
-				print_result();
+//				printf("switched\n");
+//				cudaMemcpy2D(_A, sizeof(double) * n, d_A, d_pitch, sizeof(double) * n, n, cudaMemcpyDeviceToHost);
+//				print_result();
 			#endif
 		}
 
@@ -661,9 +694,9 @@ void do_solve()
 		dividePivot<<<block_count, THREADCOUNT>>>(d_A, d_pitch, pivot, n - current, current);
 
 		#ifdef DEBUG_ENABLED
-			printf("divided\n");
-			cudaMemcpy2D(_A, sizeof(double) * n, d_A, d_pitch, sizeof(double) * n, n, cudaMemcpyDeviceToHost);
-			print_result();
+//			printf("divided\n");
+//			cudaMemcpy2D(_A, sizeof(double) * n, d_A, d_pitch, sizeof(double) * n, n, cudaMemcpyDeviceToHost);
+//			print_result();
 		#endif
 
 		// -- subtract other lines --
@@ -673,17 +706,14 @@ void do_solve()
 		cudaMemcpyAsync(_B, d_B, sizeof(double) * n, cudaMemcpyDeviceToHost, b_stream);
 		cudaCheckErrors("cudaMemcpyAsync");
 
-		int block_count_2d = BLOCK_COUNT(current, THREADCOUNT2D);
-		dim3 thread_count_2d(THREADCOUNT2D, THREADCOUNT2D);
-		
 		cudaDeviceSynchronize();
-		subtractPivot<<<block_count_2d, thread_count_2d>>>(d_A, d_pitch, n - current, current);
+		subtractPivot<<<block_count, THREADCOUNT>>>(d_A, d_pitch, n - current, current);
 		cudaDeviceSynchronize();
 
 		#ifdef DEBUG_ENABLED
-			printf("subtracted\n");
-			cudaMemcpy2D(_A, sizeof(double) * n, d_A, d_pitch, sizeof(double) * n, n, cudaMemcpyDeviceToHost);
-			print_result();
+//			printf("subtracted\n");
+//			cudaMemcpy2D(_A, sizeof(double) * n, d_A, d_pitch, sizeof(double) * n, n, cudaMemcpyDeviceToHost);
+//			print_result();
 		#endif
 	}
 
