@@ -314,7 +314,7 @@ void do_solve()
 #define THREADCOUNT 512
 #define THREADCOUNT2D 32
 #define PIVOTLBOUND 4
-#define d_Array(d_, x, y) ( *( (double*)( (char*)(d_) + (x) * d_pitch ) + (y) ) )
+#define d_Array(_d, _pitch, x, y) ( *( (double*)( (int8_t*)(_d) + (x) * (_pitch) ) + (y) ) )
 #define BLOCK_COUNT(c, tc) ((n - 1 - (c)) / (tc) + 1)
 
 #define getMax(local_pivot, local_pivot_line, tid, s)			\
@@ -337,8 +337,9 @@ void getLocalMax(double *d_A, double *d_pivot, int *d_pivot_line, int size, size
 
 	if (i < size)
 	{
-		local_pivot[tid] = fabs(d_Array(d_A, i + current, current));
+		local_pivot[tid] = fabs(d_Array(d_A, d_pitch, i + current, current));
 		local_pivot_line[tid] = i + current;
+		//printf("tid %d load %f, at [%d, %d]\n", tid, local_pivot[tid], i + current, current);
 	}
 	else
 	{
@@ -450,7 +451,7 @@ void getRealMax(double *d_pivot, int *d_pivot_line, int size, int thread_count)
 		d_pivot_line[0] = local_pivot_line[0];
 	}
 }
-
+/*
 __global__
 void switchPivot(double *d_A, double *d_current, size_t d_pitch, int size, int pivot_line, int current)
 {
@@ -458,9 +459,25 @@ void switchPivot(double *d_A, double *d_current, size_t d_pitch, int size, int p
 
 	if (i < size)
 	{
-		i += current;// printf("switch %dth value\n", i);
-		d_Array(d_A, current, i) = d_Array(d_A, pivot_line, i);
-		d_Array(d_A, pivot_line, i) = d_Array(d_current, 0, i);
+		i += current;
+		printf("switch [%d, %d]:%f, [%d, %d]:%f\n", pivot_line, i, d_Array(d_A, d_pitch, pivot_line, i), current, i, d_Array(d_current, 1, 0, i));
+		d_Array(d_A, d_pitch, current, i) = d_Array(d_A, d_pitch, pivot_line, i);
+		d_Array(d_A, d_pitch, pivot_line, i) = d_Array(d_current, d_pitch, 0, i);
+	}
+}*/
+
+__global__
+void switchPivot(double *d_A, size_t d_pitch, int size, int pivot_line, int current)
+{
+	unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < size)
+	{
+		i += current;
+		//printf("switch [%d, %d]:%f, [%d, %d]:%f\n", pivot_line, i, d_Array(d_A, d_pitch, pivot_line, i), current, i, d_Array(d_current, 1, 0, i));
+		double temp = d_Array(d_A, d_pitch, current, i);
+		d_Array(d_A, d_pitch, current, i) = d_Array(d_A, d_pitch, pivot_line, i);
+		d_Array(d_A, d_pitch, pivot_line, i) = temp;
 	}
 }
 
@@ -472,7 +489,7 @@ void dividePivot(double *d_A, size_t d_pitch, double pivot, int size, int curren
 	if (i < size)
 	{
 		i += current;// printf("switch %dth value\n", i);
-		d_Array(d_A, current, i) /= pivot;
+		d_Array(d_A, d_pitch, current, i) /= pivot; //printf("[%d, %d]:%f\n", current, i, d_Array(d_A, d_pitch, current, i));
 	}
 }
 
@@ -487,9 +504,9 @@ void subtractPivot(double *d_A, size_t d_pitch, int size, int current)
 
 	for (; j < size && i < size - 1; j += grp)
 	{//printf("[%d, %d] -= [%d, %d] * [%d, %d]\n", i+current+1, j+current,  i+current+1,current, current, j+current);
-		d_Array(d_A, i + current + 1, j + current) -=
-				d_Array(d_A, i + current + 1, current) *
-				d_Array(d_A, current, j + current);
+		d_Array(d_A, d_pitch, i + current + 1, j + current) -=
+				d_Array(d_A, d_pitch, i + current + 1, current) *
+				d_Array(d_A, d_pitch, current, j + current);
 	}
 }
 */
@@ -504,7 +521,7 @@ void subtractPivot(double *d_A, size_t d_pitch, int size, int current)
 	__shared__ double target[THREADCOUNT];
 	if (tid < size - 1)
 	{
-		target[threadIdx.x] = -d_Array(d_A, tid + current + 1, current);
+		target[threadIdx.x] = -d_Array(d_A, d_pitch, tid + current + 1, current);
 	}
 	__syncthreads();
 
@@ -512,7 +529,10 @@ void subtractPivot(double *d_A, size_t d_pitch, int size, int current)
 	{
 		for (int j = tid; j < size; j += grp)
 		{
-			d_Array(d_A, i + current + 1, j + current) += target[i] * d_Array(d_A, current, j + current);
+			d_Array(d_A, d_pitch, i + current + 1, j + current) += target[i] * d_Array(d_A, d_pitch, current, j + current);
+			//printf("[%d, %d]:%f += [%d, %d]:%f * [%d, %d]:%f\n", i + current + 1, j + current, d_Array(d_A, d_pitch, i + current + 1, j + current),
+			//	i + current + 1, current, target[i],
+			//	current, j + current, d_Array(d_A, d_pitch, current, j + current));
 		}
 	}
 }
@@ -524,8 +544,8 @@ void subtractB(double *d_A, size_t d_pitch, double *d_B, int size, int current)
 	
 	if (i < size)
 	{
-		i += current + 1;//printf("tid %d d_B: %f, %f * %f\n", i, d_B[i], d_Array(d_A, i, current), d_B[current]);
-		d_B[i] -= d_Array(d_A, i, current) * d_B[current];
+		i += current + 1;//printf("tid %d d_B: %f, %f * %f\n", i, d_B[i], d_Array(d_A, d_pitch, i, current), d_B[current]);
+		d_B[i] -= d_Array(d_A, d_pitch, i, current) * d_B[current];
 	}
 }
 
@@ -533,10 +553,10 @@ __global__
 void backSubtract(double *d_A, size_t d_pitch, double *d_B, int current)
 {
 	unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-	double target = -d_Array(d_A, i, current);
+	double target = -d_Array(d_A, d_pitch, i, current);
 
 	if (i < current)
-	{//printf("tid %d: %f * %f\n", i, target, d_Array(d_A, i, current));
+	{//printf("tid %d: %f * %f\n", i, target, d_Array(d_A, d_pitch, i, current));
 		d_B[i] += target * d_B[current];
 	}
 }
@@ -549,7 +569,7 @@ void debug_print(double *d_A, size_t d_pitch, int size)
 
 	for (int j = 0; i < size && j < size && i == 4; j++)
 	{
-		printf("[%d, %d]: %f\n", i, j, d_Array(d_A, i, j));
+		printf("[%d, %d]: %f\n", i, j, d_Array(d_A, d_pitch, i, j));
 	}
 }
 #endif
@@ -559,8 +579,8 @@ void debug_print(double *d_A, size_t d_pitch, int size)
 	cudaError_t __err = cudaGetLastError(); \
 	if (__err != cudaSuccess) \
 	{ \
-		fprintf(stderr, "Error in %s (%s at %s:%d)\n", \
-			msg, cudaGetErrorString(__err), \
+		fprintf(stderr, "Error in %s : %d, (%s at %s:%d)\n", \
+			msg, __err, cudaGetErrorString(__err), \
 			__FILE__, __LINE__); \
 		exit(1); \
 	} \
@@ -605,7 +625,9 @@ void do_solve()
 	// - 1st phase -
 	while (++current < n)
 	{
+		// get Block count
 		int block_count = BLOCK_COUNT(current, THREADCOUNT);
+
 		double pivot;
 		int pivot_line;
 
@@ -637,7 +659,6 @@ void do_solve()
 			cudaMemcpy(local_pivot_line, d_pivot_line, block_count * sizeof(int), cudaMemcpyDeviceToHost);
 
 			pivot = local_pivot[0]; pivot_line = local_pivot_line[0];
-
 			for (int i = 1; i < block_count; i++)
 			{
 				if (pivot < local_pivot[i])
@@ -657,18 +678,9 @@ void do_solve()
 		// -- switch pivot --
 		if (pivot_line != current)
 		{
-			double *d_current;
-			cudaMallocPitch((void**)&d_current, &d_pitch, sizeof(double) * n, 1);
-			cudaCheckErrors("cudaMallocPitch");
-
-			cudaMemcpy2D(d_current, d_pitch, &A(current, 0), sizeof(double) * n, sizeof(double) * n, 1, cudaMemcpyHostToDevice);
-			cudaCheckErrors("cudaMemcpy2D");
-
 			cudaDeviceSynchronize();
-			switchPivot<<<block_count, THREADCOUNT>>>(d_A, d_current, d_pitch, n - current, pivot_line, current);
-
+			switchPivot<<<block_count, THREADCOUNT>>>(d_A, d_pitch, n - current, pivot_line, current);
 			cudaDeviceSynchronize();
-			cudaFree(d_current);
 
 			cudaStreamSynchronize(b_stream);
 			double temp = B(pivot_line);
