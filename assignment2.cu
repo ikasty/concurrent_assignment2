@@ -574,14 +574,12 @@ void do_solve()
 			int size = block_count;
 			block_count = (block_count - 1) / THREADCOUNT + 1;
 
-			cudaDeviceSynchronize();
 			getRealMax<<<block_count, THREADCOUNT>>>(d_pivot, d_pivot_line, size);
 		}
 
 		double local_pivot[THREADCOUNT];
 		int local_pivot_line[THREADCOUNT];
 
-		cudaDeviceSynchronize();
 		cudaMemcpy(local_pivot, d_pivot, (block_count * sizeof(double)), cudaMemcpyDeviceToHost);
 		cudaCheckErrors("cudaMemcpy");
 		cudaMemcpy(local_pivot_line, d_pivot_line, (block_count * sizeof(int)), cudaMemcpyDeviceToHost);
@@ -611,9 +609,7 @@ void do_solve()
 		cudaStreamSynchronize(b_stream);
 		if (pivot_line != current)
 		{
-			cudaDeviceSynchronize();
 			switchPivot<<<block_count, THREADCOUNT>>>(d_A, d_pitch, n - current, pivot_line, current);
-			cudaDeviceSynchronize();
 
 			double temp = B(pivot_line);
 			B(pivot_line) = B(current);
@@ -627,7 +623,6 @@ void do_solve()
 		}
 
 		// -- divide pivot line --
-		cudaDeviceSynchronize();
 		B(current) /= pivot;
 		cudaMemcpyAsync(d_B, _B, sizeof(double) * n, cudaMemcpyHostToDevice, b_stream);
 		cudaCheckErrors("cudaMemcpyAsync");
@@ -641,14 +636,11 @@ void do_solve()
 
 		// -- subtract other lines --
 		cudaStreamSynchronize(b_stream);
-		cudaDeviceSynchronize();
 		subtractB<<<block_count, THREADCOUNT>>>(d_A, d_pitch, d_B, n - current - 1, current);
-		cudaDeviceSynchronize();
 		cudaMemcpyAsync(_B, d_B, sizeof(double) * n, cudaMemcpyDeviceToHost, b_stream);
 		cudaCheckErrors("cudaMemcpyAsync");
 
 		subtractPivot<<<block_count, THREADCOUNT>>>(d_A, d_pitch, n - current - 1, current);
-		cudaDeviceSynchronize();
 
 		#ifdef DEBUG_ENABLED
 			printf("subtracted\n");
@@ -661,7 +653,6 @@ void do_solve()
 	while (--current > 0)
 	{
 		int block_count = BLOCK_COUNT(n - current, THREADCOUNT);
-		cudaDeviceSynchronize();
 		backSubtract<<<block_count, THREADCOUNT>>>(d_A, d_pitch, d_B, current);
 
 		#ifdef DEBUG_ENABLED
