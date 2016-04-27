@@ -23,7 +23,7 @@ naive: assignment2.cu
 	@gcc assignment2.c -std=gnu99 -D_SVID_SOURCE -D_XOPEN_SOURCE=600 $(OPTION) -DNAIVE -lm -g -O3 -o assignment2
 
 cuda: assignment2.cu
-	nvcc assignment2.cu -D_SVID_SOURCE -D_XOPEN_SOURCE=600 $(OPTION) -DCUDA -L/usr/local/cuda/lib -lcudart -lm -g -O3 -o assignment2
+	@nvcc assignment2.cu -D_SVID_SOURCE -D_XOPEN_SOURCE=600 $(OPTION) -DCUDA -L/usr/local/cuda/lib -lcudart -lm -g -O3 -o assignment2
 
 info: assignment2.cu
-	nvcc assignment2.cu -D_SVID_SOURCE -D_XOPEN_SOURCE=600 -DINFO -L/usr/local/cuda/lib -lcudart -lm -g -O3 -o assignment2
+	@nvcc assignment2.cu -D_SVID_SOURCE -D_XOPEN_SOURCE=600 -DINFO -L/usr/local/cuda/lib -lcudart -lm -g -O3 -o assignment2
