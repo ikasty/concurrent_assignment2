@@ -388,20 +388,19 @@ void getLocalMax(double *d_A, double *d_pivot, int *d_pivot_line, int size, size
 	}
 }
 
-// TODO: thread_count 를 constant로 변경할 것
 __global__
-void getRealMax(double *d_pivot, int *d_pivot_line, int size, int thread_count)
+void getRealMax(double *d_pivot, int *d_pivot_line, int size)
 {
-	extern __shared__ float array[];
 	unsigned int tid = threadIdx.x;
+	unsigned int i = blockIdx.x * blockDim.x + tid;
 
-	double	*local_pivot 		= (double*)&array[0];
-	int		*local_pivot_line	= (int*)&local_pivot[thread_count];
+	__shared__ double	local_pivot		[THREADCOUNT];
+	__shared__ int		local_pivot_line[THREADCOUNT];
 
-	if (tid < size)
+	if (i < size)
 	{
-		local_pivot[tid]		= d_pivot[tid];
-		local_pivot_line[tid]	= d_pivot_line[tid];
+		local_pivot[tid]		= d_pivot[i];
+		local_pivot_line[tid]	= d_pivot_line[i];
 	}
 	else
 	{
@@ -409,19 +408,19 @@ void getRealMax(double *d_pivot, int *d_pivot_line, int size, int thread_count)
 	}
 	__syncthreads();
 /*
-	if (thread_count >= 512)
+	if (THREADCOUNT >= 512)
 	{
 		if (tid < 256) { getMax(local_pivot, local_pivot_line, tid, 256); }
 	}
 	__syncthreads();
 
-	if (thread_count >= 256)
+	if (THREADCOUNT >= 256)
 	{
 		if (tid < 128) { getMax(local_pivot, local_pivot_line, tid, 128); }
 	}
 	__syncthreads();
 
-	if (thread_count >= 128)
+	if (THREADCOUNT >= 128)
 	{
 		if (tid < 64)  { getMax(local_pivot, local_pivot_line, tid, 64);  }
 	}
@@ -437,7 +436,7 @@ void getRealMax(double *d_pivot, int *d_pivot_line, int size, int thread_count)
 		getMax(local_pivot, local_pivot_line, tid, 1);
 	}
 */
-	for (int i = thread_count / 2; i > 0; i /= 2)
+	for (int i = THREADCOUNT / 2; i > 0; i /= 2)
 	{
 		if (tid < i)
 		{
@@ -632,39 +631,35 @@ void do_solve()
 
 		// -- find pivot --
 		getLocalMax<<<block_count, THREADCOUNT>>>(d_A, d_pivot, d_pivot_line, n - current, d_pitch, current);
-		if (block_count > PIVOTLBOUND)
+
+		while (block_count > PIVOTLBOUND)
 		{
-			int thread_count = THREADCOUNT;
-			while (thread_count < block_count) thread_count *= 2;
-
-			int shared_size = (sizeof(double) + sizeof(int)) * thread_count;
+			int size = block_count;
+			block_count = (block_count - 1) / THREADCOUNT + 1;
 
 			cudaDeviceSynchronize();
-			getRealMax<<<1, thread_count, shared_size>>>(d_pivot, d_pivot_line, block_count, thread_count);
-			cudaDeviceSynchronize();
-			cudaMemcpy(&pivot_line, d_pivot_line, sizeof(int), cudaMemcpyDeviceToHost);
+			getRealMax<<<block_count, THREADCOUNT>>>(d_pivot, d_pivot_line, size);
 		}
-		else
+
+		double local_pivot[PIVOTLBOUND];
+		int local_pivot_line[PIVOTLBOUND];
+
+		cudaDeviceSynchronize();
+		cudaMemcpy(local_pivot, d_pivot, block_count * sizeof(double), cudaMemcpyDeviceToHost);
+		cudaMemcpy(local_pivot_line, d_pivot_line, block_count * sizeof(int), cudaMemcpyDeviceToHost);
+
+		pivot = local_pivot[0]; pivot_line = local_pivot_line[0];
+		for (int i = 1; i < block_count; i++)
 		{
-			double local_pivot[PIVOTLBOUND];
-			int local_pivot_line[PIVOTLBOUND];
-
-			cudaDeviceSynchronize();
-			cudaMemcpy(local_pivot, d_pivot, block_count * sizeof(double), cudaMemcpyDeviceToHost);
-			cudaMemcpy(local_pivot_line, d_pivot_line, block_count * sizeof(int), cudaMemcpyDeviceToHost);
-
-			pivot = local_pivot[0]; pivot_line = local_pivot_line[0];
-			for (int i = 1; i < block_count; i++)
+			if (pivot < local_pivot[i])
 			{
-				if (pivot < local_pivot[i])
-				{
-					pivot = local_pivot[i];
-					pivot_line = local_pivot_line[i];
-				}
+				pivot = local_pivot[i];
+				pivot_line = local_pivot_line[i];
 			}
 		}
 
-		cudaDeviceSynchronize();
+		// get block count again
+		block_count = BLOCK_COUNT(current, THREADCOUNT);
 
 		// get pivot line from device
 		//printf("pivot line is %d, current %d, pitch %lu: base %p, address %p\n", pivot_line, current, d_pitch, d_A, &d_Array(d_A, d_pitch, pivot_line, current));
