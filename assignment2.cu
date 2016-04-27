@@ -594,8 +594,7 @@ void do_solve()
 	double *pivot_candidate;
 	errno = posix_memalign((void **)&pivot_candidate, 0x40, n * sizeof(double));
 	if (errno) return ;
-	cudaStream_t pivot_stream, b_stream;
-	cudaStreamCreate(&pivot_stream);
+	cudaStream_t b_stream;
 	cudaStreamCreate(&b_stream);
 
 	#ifdef EBM
@@ -631,10 +630,6 @@ void do_solve()
 		double pivot;
 		int pivot_line;
 
-		// get pivot line from device
-		cudaMemcpy2DAsync(pivot_candidate, sizeof(double), &d_Array(d_A, 0, current), d_pitch, sizeof(double), n, cudaMemcpyDeviceToHost, pivot_stream);
-		cudaCheckErrors("cudaMemcpy2DAsync");
-
 		// -- find pivot --
 		getLocalMax<<<block_count, THREADCOUNT>>>(d_A, d_pivot, d_pivot_line, n - current, d_pitch, current);
 		if (block_count > PIVOTLBOUND)
@@ -669,11 +664,16 @@ void do_solve()
 			}
 		}
 
-		cudaStreamSynchronize(pivot_stream);
 		cudaDeviceSynchronize();
-		pivot = pivot_candidate[pivot_line];
 
-		printf("find pivot %.32f in %d\n", pivot, pivot_line);
+		// get pivot line from device
+		//printf("pivot line is %d, current %d, pitch %lu: base %p, address %p\n", pivot_line, current, d_pitch, d_A, &d_Array(d_A, d_pitch, pivot_line, current));
+		cudaMemcpy(&pivot, &d_Array(d_A, d_pitch, pivot_line, current), sizeof(double), cudaMemcpyDeviceToHost);
+		cudaCheckErrors("cudaMemcpy");
+
+		#ifdef DEBUG_ENABLED
+			dprintf("find pivot %.32f in %d\n", pivot, pivot_line);
+		#endif
 
 		// -- switch pivot --
 		if (pivot_line != current)
@@ -737,9 +737,9 @@ void do_solve()
 		backSubtract<<<block_count, THREADCOUNT>>>(d_A, d_pitch, d_B, current);
 
 		#ifdef DEBUG_ENABLED
-			printf("2nd phase: current %d\n", current);
-			cudaMemcpy(_B, d_B, sizeof(double) * n, cudaMemcpyDeviceToHost);
-			print_result();
+//			printf("2nd phase: current %d\n", current);
+//			cudaMemcpy(_B, d_B, sizeof(double) * n, cudaMemcpyDeviceToHost);
+//			print_result();
 		#endif
 	}
 
