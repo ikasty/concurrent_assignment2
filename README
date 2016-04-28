@@ -1,0 +1,30 @@
+This is the readme file of assignment 2
+
+Daeyoun Kang, 20163003
+Apr 28, 2016
+
+
+
+Compile
+=============
+You need GNU make, gcc and nvcc to compile this code. There are three build options for compile.
+ * make naive			compile naive version (no thread)
+ * make cuda			compile concurrent version using CUDA
+ * make info			compile special version for print GPU information and junk time data
+ * make clean			clear files
+You should set build options. If there is no build options, Makefile will print usage command instead compile it. Note that compile naive version will generate assignment2.c, which is not original source code.
+
+You can put extra options when compile. These are the option you can use.
+ * NORAND=1				compile without setrand function. it'll be useful when checking bug in algorithm.
+ * DEBUG=1				compile with debug message
+You don't need to set extra options.
+
+
+Execute
+============
+After compile, there will be one executable file, assignment1. To execute this file, use this command:
+  ./assignment2 <size>
+You need to set size even when you execute information version.
+
+If number of argument is less than 1, program will show usage command and terminate. If there are equal or more than 2 arguments, it'll be ignored.
+Only digits allowed in arguments. If there are not digits in arguments, program will terminate without printing any error.
